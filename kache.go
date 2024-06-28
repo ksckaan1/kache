@@ -6,57 +6,49 @@ import (
 	"time"
 )
 
-type valueWithTTL[V any] struct {
-	value V
-	ttl   time.Time
+type valueWithTTL[K comparable, V any] struct {
+	key         K
+	value       V
+	setTime     time.Time
+	ttl         time.Duration
+	lastHitTime time.Time
 }
 
 type Kache[K comparable, V any] struct {
-	store        map[K]valueWithTTL[V]
-	mut          *sync.Mutex
-	maxRecordNum int
+	store         map[K]*valueWithTTL[K, V]
+	mut           *sync.Mutex
+	maxRecordNum  int
+	cleanNum      int
+	cleanStrategy cleanStrategy
 }
 
 func New[K comparable, V any]() *Kache[K, V] {
 	k := &Kache[K, V]{
-		store:        make(map[K]valueWithTTL[V]),
+		store:        make(map[K]*valueWithTTL[K, V]),
 		mut:          new(sync.Mutex),
 		maxRecordNum: -1,
 	}
 	return k
 }
 
-// WithMaxRecordNum sets the maximum number of records to keep in the cache.
-func (k *Kache[K, V]) WithMaxRecordNum(num int) *Kache[K, V] {
-	k.maxRecordNum = num
-	return k
-}
-
 // Set sets a value in the cache.
 func (k *Kache[K, V]) Set(key K, v V) {
-	defer k.lock()()
-	k.store[key] = valueWithTTL[V]{
-		value: v,
-	}
+	k.set(key, v, 0)
 }
 
 // SetWithTTL sets a value in the cache with a TTL. If the TTL is 0, the value will not expire.
 func (k *Kache[K, V]) SetWithTTL(key K, v V, ttl time.Duration) {
-	defer k.lock()()
-	var ttlVal time.Time
-	if ttl > 0 {
-		ttlVal = time.Now().Add(ttl)
-	}
-	k.store[key] = valueWithTTL[V]{
-		value: v,
-		ttl:   ttlVal,
-	}
+	k.set(key, v, ttl)
 }
 
 // Get gets a value from the cache. Returns false in second value if the key does not exist.
 func (k *Kache[K, V]) Get(key K) (V, bool) {
 	defer k.lock()()
 	item, ok := k.store[key]
+	if !ok {
+		return *new(V), false
+	}
+	item.lastHitTime = time.Now()
 	return item.value, ok
 }
 
@@ -99,11 +91,11 @@ func (k *Kache[K, V]) Poll(ctx context.Context, pollInterval time.Duration) {
 			return
 		case <-ticker.C:
 			now := time.Now()
-			for key, value := range k.store {
-				if value.ttl.IsZero() {
+			for key := range k.store {
+				if k.store[key].ttl == 0 {
 					continue
 				}
-				if value.ttl.After(now) {
+				if k.store[key].setTime.Add(k.store[key].ttl).After(now) {
 					k.mut.Lock()
 					delete(k.store, key)
 					k.mut.Unlock()
@@ -116,4 +108,28 @@ func (k *Kache[K, V]) Poll(ctx context.Context, pollInterval time.Duration) {
 func (k *Kache[K, V]) lock() func() {
 	k.mut.Lock()
 	return k.mut.Unlock
+}
+
+func (k *Kache[K, V]) set(key K, v V, ttl time.Duration) {
+	defer k.lock()()
+	if k.maxRecordNum > 0 && len(k.store) >= k.maxRecordNum {
+		k.clean()
+	}
+	now := time.Now()
+	k.store[key] = &valueWithTTL[K, V]{
+		key:         key,
+		value:       v,
+		ttl:         ttl,
+		lastHitTime: now,
+		setTime:     now,
+	}
+}
+
+func (k *Kache[K, V]) clean() {
+	switch k.cleanStrategy {
+	case cleanStrategyLRU:
+		k.cleanLRU()
+	case cleanStrategyFIFO:
+		k.cleanFIFO()
+	}
 }

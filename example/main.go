@@ -7,21 +7,24 @@ import (
 )
 
 func main() {
-	k := kache.New[string, string]()
+	k := kache.New[string, string]().
+		WithCleanStrategyFIFO(10, 5)
 
-	k.Set("foo1", "bar")
-	k.Set("foo2", "bar")
+	k.Set("key1", "value")
+	k.Set("key2", "value")
+	k.Set("key3", "value")
+	k.Set("key4", "value")
+	k.Set("key5", "value")
+	k.Set("key6", "value")
+	k.Set("key7", "value")
+	k.Set("key8", "value")
+	k.Set("key9", "value")
+	k.Set("key10", "value")
 
-	fmt.Println("key count:", k.Count())
-	fmt.Println("keys:", k.Keys())
+	fmt.Println(k.Get("key1"))
+	fmt.Println(k.Get("key2"))
 
-	fmt.Println(k.Get("foo1"))
+	k.Set("key11", "value")
 
-	k.Delete("foo1")
-
-	fmt.Println(k.Get("foo"))
-
-	k.Flush()
-
-	fmt.Println(k.Get("foo2"))
+	fmt.Println(k.Keys())
 }
