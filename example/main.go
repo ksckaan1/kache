@@ -1,30 +1,30 @@
 package main
 
 import (
+	"context"
 	"fmt"
+	"time"
 
 	"github.com/ksckaan1/kache"
 )
 
 func main() {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
 	k := kache.New[string, string]().
-		WithCleanStrategyFIFO(10, 5)
+		WithCleanStrategyLRU(10000, 1000)
 
-	k.Set("key1", "value")
-	k.Set("key2", "value")
-	k.Set("key3", "value")
-	k.Set("key4", "value")
-	k.Set("key5", "value")
-	k.Set("key6", "value")
-	k.Set("key7", "value")
-	k.Set("key8", "value")
-	k.Set("key9", "value")
-	k.Set("key10", "value")
+	go k.Poll(ctx, time.Second) // make sense if used value with ttl
 
-	fmt.Println(k.Get("key1"))
-	fmt.Println(k.Get("key2"))
+	k.Set("get_user_response/user_id:1", "user1")
+	k.SetWithTTL("user_token:1", "token1", 10*time.Minute)
 
-	k.Set("key11", "value")
+	fmt.Println("count:", k.Count()) // 2
+	fmt.Println("keys:", k.Keys())   // [get_user_response/user_id:1 user_token:1]
 
-	fmt.Println(k.Keys())
+	k.Delete("get_user_response/user_id:1")
+
+	k.Flush()
+	fmt.Println("count:", k.Count()) // 0
 }
