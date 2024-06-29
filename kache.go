@@ -1,21 +1,21 @@
 package kache
 
 import (
+	"container/list"
 	"context"
 	"sync"
 	"time"
 )
 
 type valueWithTTL[K comparable, V any] struct {
-	key         K
-	value       V
-	setTime     time.Time
-	ttl         time.Duration
-	lastHitTime time.Time
+	key        K
+	value      V
+	expireTime time.Time
 }
 
 type Kache[K comparable, V any] struct {
-	store         map[K]*valueWithTTL[K, V]
+	elems         *list.List // front of list == greater risk of deletion <---------list---------> back of list == less risk of deletion
+	store         map[K]*list.Element
 	mut           *sync.Mutex
 	maxRecordNum  int
 	cleanNum      int
@@ -24,7 +24,8 @@ type Kache[K comparable, V any] struct {
 
 func New[K comparable, V any]() *Kache[K, V] {
 	k := &Kache[K, V]{
-		store:        make(map[K]*valueWithTTL[K, V]),
+		elems:        list.New(),
+		store:        make(map[K]*list.Element),
 		mut:          new(sync.Mutex),
 		maxRecordNum: -1,
 	}
@@ -48,19 +49,23 @@ func (k *Kache[K, V]) Get(key K) (V, bool) {
 	if !ok {
 		return *new(V), false
 	}
-	item.lastHitTime = time.Now()
-	return item.value, ok
+	if k.cleanStrategy == cleanStrategyLRU {
+		k.elems.MoveToBack(item)
+	}
+	return item.Value.(*valueWithTTL[K, V]).value, true
 }
 
 // Delete deletes a value from the cache.
 func (k *Kache[K, V]) Delete(key K) {
 	defer k.lock()()
+	k.elems.Remove(k.store[key])
 	delete(k.store, key)
 }
 
 // Flush deletes all values from the cache.
 func (k *Kache[K, V]) Flush() {
 	defer k.lock()()
+	k.elems.Init()
 	clear(k.store)
 }
 
@@ -77,7 +82,7 @@ func (k *Kache[K, V]) Keys() []K {
 // Count returns the number of values in the cache.
 func (k *Kache[K, V]) Count() int {
 	defer k.lock()()
-	return len(k.store)
+	return k.elems.Len()
 }
 
 // Poll deletes expired values from the cache with the given poll interval. If context is cancelled, the polling stops.
@@ -90,17 +95,18 @@ func (k *Kache[K, V]) Poll(ctx context.Context, pollInterval time.Duration) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
+			k.mut.Lock()
 			now := time.Now()
 			for key := range k.store {
-				if k.store[key].ttl == 0 {
+				if k.store[key].Value.(*valueWithTTL[K, V]).expireTime.IsZero() {
 					continue
 				}
-				if k.store[key].setTime.Add(k.store[key].ttl).After(now) {
-					k.mut.Lock()
+				if elem := k.store[key]; elem.Value.(*valueWithTTL[K, V]).expireTime.After(now) {
+					k.elems.Remove(elem)
 					delete(k.store, key)
-					k.mut.Unlock()
 				}
 			}
+			k.mut.Unlock()
 		}
 	}
 }
@@ -115,21 +121,15 @@ func (k *Kache[K, V]) set(key K, v V, ttl time.Duration) {
 	if k.maxRecordNum > 0 && len(k.store) >= k.maxRecordNum {
 		k.clean()
 	}
-	now := time.Now()
-	k.store[key] = &valueWithTTL[K, V]{
-		key:         key,
-		value:       v,
-		ttl:         ttl,
-		lastHitTime: now,
-		setTime:     now,
+	value := &valueWithTTL[K, V]{
+		key:        key,
+		value:      v,
+		expireTime: time.Now().Add(ttl),
 	}
-}
-
-func (k *Kache[K, V]) clean() {
-	switch k.cleanStrategy {
-	case cleanStrategyLRU:
-		k.cleanLRU()
-	case cleanStrategyFIFO:
-		k.cleanFIFO()
+	if oldElem, ok := k.store[key]; ok {
+		oldElem.Value = value
+		k.elems.MoveToBack(oldElem)
+		return
 	}
+	k.store[key] = k.elems.PushBack(value)
 }
