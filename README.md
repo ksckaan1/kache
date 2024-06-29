@@ -2,6 +2,10 @@
 
 In-memory cache with TTL and generics support.
 
+## Features
+- TTL support
+- generics support
+- Cache Replacement Strategy: LRU, FIFO, None
 
 ## Installation
 
