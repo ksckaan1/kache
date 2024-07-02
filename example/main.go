@@ -1,7 +1,6 @@
 package main
 
 import (
-	"context"
 	"fmt"
 	"time"
 
@@ -9,22 +8,29 @@ import (
 )
 
 func main() {
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	k := kache.New[string, string](kache.Config{
+		ReplacementStrategy: kache.ReplacementStrategyLRU,
+		MaxRecordTreshold:   1000,
+		CleanNum:            100,
+	})
+	defer k.Close()
 
-	k := kache.New[string, string]().
-		WithCleanStrategyLRU(10000, 1000)
+	// Set with TTL
+	k.SetWithTTL("token/user_id:1", "eyJhbGciOiJ...", 30*time.Minute)
 
-	go k.Poll(ctx, time.Second) // make sense if used value with ttl
-
-	k.Set("get_user_response/user_id:1", "user1")
-	k.SetWithTTL("user_token:1", "token1", 10*time.Minute)
-
-	fmt.Println("count:", k.Count()) // 2
-	fmt.Println("keys:", k.Keys())   // [get_user_response/user_id:1 user_token:1]
+	// Set without TTL
+	k.Set("get_user_response/user_id:1", "John Doe")
+	k.Set("get_user_response/user_id:2", "Jane Doe")
+	k.Set("get_user_response/user_id:3", "Walter White")
+	k.Set("get_user_response/user_id:4", "Jesse Pinkman")
 
 	k.Delete("get_user_response/user_id:1")
 
-	k.Flush()
-	fmt.Println("count:", k.Count()) // 0
+	fmt.Println(k.Get("token/user_id:1"))             // eyJhbGciOiJ..., true
+	fmt.Println(k.Get("get_user_response/user_id:1")) // "", false
+
+	fmt.Println("keys", k.Keys())   // List of keys
+	fmt.Println("count", k.Count()) // Number of keys
+
+	k.Flush() // Deletes all keys
 }
