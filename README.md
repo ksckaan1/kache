@@ -4,8 +4,15 @@ In-memory cache with TTL and generics support.
 
 ## Features
 - TTL support
-- generics support
-- Cache Replacement Strategy: LRU, FIFO, None
+- Generics support
+- Supported Cache Replacement Strategies
+  - LRU (Least Recently Used)
+  - MRU (Most Recently Used)
+  - LFU (Least Frequently Used)
+  - MFU (Most Frequently Used)
+  - FIFO (First In First Out)
+  - LIFO (Last In First Out)
+  - NONE (no replacement)
 
 ## Installation
 
@@ -19,34 +26,38 @@ go get github.com/ksckaan1/kache
 package main
 
 import (
-  "context"
-  "fmt"
-  "time"
+	"fmt"
+	"time"
 
-  "github.com/ksckaan1/kache"
+	"github.com/ksckaan1/kache"
 )
 
 func main() {
-  ctx, cancel := context.WithCancel(context.Background())
-  defer cancel()
+	k := kache.New[string, string](kache.Config{
+		ReplacementStrategy: kache.ReplacementStrategyLRU,
+		MaxRecordTreshold:   1000,
+		CleanNum:            100,
+	})
+	defer k.Close()
 
-  // key = string, value = string
-  k := kache.New[string, string]().
-    WithCleanStrategyLRU(10000, 1000)
-  // if reaches 10000, it will delete 1000 records
-  // by LRU (Least Recently Used)
+	// Set with TTL
+	k.SetWithTTL("token/user_id:1", "eyJhbGciOiJ...", 30*time.Minute)
 
-  go k.Poll(ctx, time.Second) // make sense if storing value with ttl
+	// Set without TTL
+	k.Set("get_user_response/user_id:1", "John Doe")
+	k.Set("get_user_response/user_id:2", "Jane Doe")
+	k.Set("get_user_response/user_id:3", "Walter White")
+	k.Set("get_user_response/user_id:4", "Jesse Pinkman")
 
-  k.Set("get_user_response/user_id:1", "user1")
-  k.SetWithTTL("user_token:1", "token1", 10*time.Minute)
+	k.Delete("get_user_response/user_id:1")
 
-  fmt.Println("count:", k.Count()) // 2
-  fmt.Println("keys:", k.Keys())   // [get_user_response/user_id:1 user_token:1]
+	fmt.Println(k.Get("token/user_id:1"))             // eyJhbGciOiJ..., true
+	fmt.Println(k.Get("get_user_response/user_id:1")) // "", false
 
-  k.Delete("get_user_response/user_id:1") // deletes record with the given key
+	fmt.Println("keys", k.Keys())   // List of keys
+	fmt.Println("count", k.Count()) // Number of keys
 
-  k.Flush() // deletes all records
-  fmt.Println("count:", k.Count()) // 0
+	k.Flush() // Deletes all keys
 }
+
 ```
