@@ -2,7 +2,6 @@ package kache
 
 import (
 	"container/list"
-	"fmt"
 	"sync"
 	"time"
 )
@@ -23,6 +22,7 @@ type Kache[K comparable, V any] struct {
 	replacementStrategy ReplacementStrategy
 	pollInterval        time.Duration
 	pollCancel          chan struct{}
+	wg                  *sync.WaitGroup
 }
 
 type Config struct {
@@ -47,8 +47,10 @@ func New[K comparable, V any](cfg Config) *Kache[K, V] {
 		replacementStrategy: cfg.ReplacementStrategy,
 		pollInterval:        pollInterval,
 		pollCancel:          make(chan struct{}),
+		wg:                  new(sync.WaitGroup),
 	}
 
+	k.wg.Add(1)
 	go k.poll()
 
 	return k
@@ -122,22 +124,28 @@ func (k *Kache[K, V]) Count() int {
 }
 
 func (k *Kache[K, V]) Close() {
+	if k.pollCancel == nil {
+		return
+	}
+	k.lock()()
 	close(k.pollCancel)
+	clear(k.store)
+	k.elems.Init()
+	k.wg.Wait()
 }
 
 // Poll deletes expired values from the cache with the given poll interval. If context is cancelled, the polling stops.
 func (k *Kache[K, V]) poll() {
-	fmt.Println("polling", k.pollInterval)
 	ticker := time.NewTicker(k.pollInterval)
 	defer ticker.Stop()
 
 	for {
 		select {
 		case <-k.pollCancel:
-			fmt.Println("poll canceled")
+			k.pollCancel = nil
+			k.wg.Done()
 			return
 		case <-ticker.C:
-			fmt.Println("polling")
 			k.mut.Lock()
 			now := time.Now()
 			for key := range k.store {
@@ -152,8 +160,6 @@ func (k *Kache[K, V]) poll() {
 			k.mut.Unlock()
 		}
 	}
-
-	fmt.Println("poll stopped")
 }
 
 func (k *Kache[K, V]) lock() func() {
@@ -162,6 +168,9 @@ func (k *Kache[K, V]) lock() func() {
 }
 
 func (k *Kache[K, V]) set(key K, v V, ttl time.Duration) {
+	if k.pollCancel == nil {
+		return
+	}
 	defer k.lock()()
 	if k.maxRecordThreshold > 0 && k.cleanNum > 0 && k.replacementStrategy > ReplacementStrategyNone && len(k.store) >= k.maxRecordThreshold {
 		k.clean()
@@ -187,7 +196,7 @@ func (k *Kache[K, V]) set(key K, v V, ttl time.Duration) {
 
 	// if not exists
 	switch k.replacementStrategy {
-	case ReplacementStrategyFIFO, ReplacementStrategyLRU, ReplacementStrategyLFU, ReplacementStrategyMFU:
+	case ReplacementStrategyFIFO, ReplacementStrategyLRU, ReplacementStrategyLFU, ReplacementStrategyMFU, ReplacementStrategyNone:
 		k.store[key] = k.elems.PushBack(value)
 	case ReplacementStrategyLIFO, ReplacementStrategyMRU:
 		k.store[key] = k.elems.PushFront(value)
