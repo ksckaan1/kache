@@ -61,3 +61,28 @@ func main() {
 }
 
 ```
+
+## Benchmark Tests
+
+### Set With TTL / Set Without TTL
+```bash
+goos: darwin
+goarch: arm64
+pkg: github.com/ksckaan1/kache
+BenchmarkKacheSetWithTTL
+BenchmarkKacheSetWithTTL-8   	 4838650	       236.8 ns/op	     129 B/op	       4 allocs/op
+PASS
+ok  	github.com/ksckaan1/kache	1.842s
+```
+
+### Get
+```bash
+goos: darwin
+goarch: arm64
+pkg: github.com/ksckaan1/kache
+BenchmarkKacheGet
+BenchmarkKacheGet-8   	83910825	        13.98 ns/op	       0 B/op	       0 allocs/op
+PASS
+ok  	github.com/ksckaan1/kache	2.094s
+```
+
